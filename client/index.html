@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Exvia P2P</title>
+</head>
+<body>
+  <div>
+    <p><strong>My public key:</strong> <span id="myKey"></span></p>
+    <input type="text" id="nickInput" placeholder="Your nick" />
+    <button id="saveNick">Save Nick</button>
+  </div>
+
+  <hr/>
+  <div>
+    <h3>Servers (nodes)</h3>
+    <input type="text" id="serverAddressInput" placeholder="ws://localhost:8080" size="40" />
+    <button id="addServerBtn">Add Server</button>
+    <ul id="serverList"></ul>
+    <button id="connectSelectedBtn" disabled>Connect to selected</button>
+    <button id="disconnectBtn" disabled>Disconnect</button>
+    <span id="connectionStatus">Not connected</span>
+  </div>
+
+  <hr/>
+  <div>
+    <h3>Send message</h3>
+    <input type="text" id="targetKey" placeholder="Target public key (hex)" size="64" />
+    <input type="text" id="messageInput" placeholder="Message" />
+    <button id="sendBtn" disabled>Send</button>
+  </div>
+  <pre id="log"></pre>
+  <script type="module">
+    import { Client } from './client.ts';
+
+    const log = document.getElementById('log');
+    const myKeySpan = document.getElementById('myKey');
+    const nickInput = document.getElementById('nickInput');
+    const saveNickBtn = document.getElementById('saveNick');
+    const serverAddressInput = document.getElementById('serverAddressInput');
+    const addServerBtn = document.getElementById('addServerBtn');
+    const serverList = document.getElementById('serverList');
+    const connectSelectedBtn = document.getElementById('connectSelectedBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const sendBtn = document.getElementById('sendBtn');
+    const targetKeyInput = document.getElementById('targetKey');
+    const messageInput = document.getElementById('messageInput');
+
+    function addLog(msg) { 
+      log.textContent += new Date().toLocaleTimeString() + ': ' + msg + '\n'; 
+    }
+
+    // Загрузка сохранённых серверов из localStorage
+    let savedServers = JSON.parse(localStorage.getItem('servers') || '["ws://localhost:8080"]');
+    let selectedServer = localStorage.getItem('selectedServer') || savedServers[0] || 'ws://localhost:8080';
+
+    let client = new Client();
+    myKeySpan.textContent = client.getPublicKeyHex();
+    nickInput.value = localStorage.getItem('nick') || 'Anonymous';
+
+    // Обновить отображение списка серверов
+    function renderServerList() {
+      serverList.innerHTML = '';
+      savedServers.forEach(addr => {
+        const li = document.createElement('li');
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'server';
+        radio.value = addr;
+        radio.checked = (addr === selectedServer);
+        radio.addEventListener('change', () => {
+          selectedServer = addr;
+          localStorage.setItem('selectedServer', selectedServer);
+          updateConnectButton();
+        });
+        li.appendChild(radio);
+        li.appendChild(document.createTextNode(' ' + addr));
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = 'Remove';
+        removeBtn.style.marginLeft = '10px';
+        removeBtn.addEventListener('click', () => {
+          savedServers = savedServers.filter(s => s !== addr);
+          localStorage.setItem('servers', JSON.stringify(savedServers));
+          if (selectedServer === addr) {
+            selectedServer = savedServers[0] || '';
+            localStorage.setItem('selectedServer', selectedServer);
+          }
+          renderServerList();
+          updateConnectButton();
+        });
+        li.appendChild(removeBtn);
+        
+        serverList.appendChild(li);
+      });
+    }
+
+    function updateConnectButton() {
+      connectSelectedBtn.disabled = !selectedServer;
+    }
+
+    saveNickBtn.onclick = () => {
+      const nick = nickInput.value.trim() || 'Anonymous';
+      client.setNick(nick);
+      addLog(`Nick saved: ${nick}`);
+    };
+
+    addServerBtn.onclick = () => {
+      const addr = serverAddressInput.value.trim();
+      if (!addr) return;
+      if (!savedServers.includes(addr)) {
+        savedServers.push(addr);
+        localStorage.setItem('servers', JSON.stringify(savedServers));
+        renderServerList();
+        serverAddressInput.value = '';
+
+        if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+          client.addServerToNetwork(addr);
+          addLog(`📡 Sent new server address to the network: ${addr}`);
+        }
+      } else {
+        addLog('Server already in list');
+      }
+    };
+
+    renderServerList();
+    updateConnectButton();
+
+    client.onData((from, message) => {
+      const messageStr = new TextDecoder().decode(message);
+      const firstNewline = messageStr.indexOf('\n');
+      let nick = 'unknown';
+      let text = messageStr;
+      if (firstNewline !== -1) {
+        nick = messageStr.substring(0, firstNewline);
+        text = messageStr.substring(firstNewline + 1);
+      }
+      const fromHex = Array.from(from).map(b => b.toString(16).padStart(2,'0')).join('').slice(0,8);
+      addLog(`📩 From ${nick} (${fromHex}): ${text}`);
+    });
+
+    connectSelectedBtn.onclick = async () => {
+      if (!selectedServer) return;
+      try {
+        addLog(`Connecting to ${selectedServer}...`);
+        await client.connect(selectedServer);
+        connectionStatus.textContent = `Connected to ${selectedServer}`;
+        connectSelectedBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        sendBtn.disabled = false;
+      } catch (e) {
+        addLog(`❌ Connection failed: ${e.message}`);
+        connectionStatus.textContent = 'Connection failed';
+      }
+    };
+
+    disconnectBtn.onclick = () => {
+      client.disconnect();
+      connectionStatus.textContent = 'Disconnected';
+      connectSelectedBtn.disabled = false;
+      disconnectBtn.disabled = true;
+      sendBtn.disabled = true;
+    };
+
+    sendBtn.onclick = () => {
+      const targetHex = targetKeyInput.value.trim().replace(/\s+/g, '');
+      const messageText = messageInput.value.trim();
+      if (!targetHex || !messageText) {
+        addLog('Target key and message required');
+        return;
+      }
+      try {
+        if (!/^[0-9a-fA-F]{64}$/.test(targetHex)) {
+          addLog('Target key must be 64 hex characters');
+          return;
+        }
+        const bytes = targetHex.match(/.{2}/g);
+        if (!bytes) {
+          addLog('Invalid hex format');
+          return;
+        }
+        const targetBytes = new Uint8Array(bytes.map(byte => parseInt(byte, 16)));
+        client.sendTo(targetBytes, messageText);
+        addLog(`📤 Sent to ${targetHex.slice(0,8)}: ${messageText}`);
+        messageInput.value = '';
+      } catch (e) {
+        addLog('Error: ' + e.message);
+      }
+    };
+  </script>
+</body>
+</html>
