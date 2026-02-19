@@ -3,7 +3,8 @@ export const VERSION = 0x01;
 export enum MsgType { 
   HANDSHAKE = 1, 
   DATA = 2,
-  NODE_INFO = 3   // для обмена информацией между серверами
+  NODE_INFO = 3,
+  SIGNED_DATA = 4   // новый тип
 }
 
 // Подтипы NODE_INFO
@@ -57,3 +58,5 @@ export function decodeFrame(buffer: ArrayBuffer): Frame {
   const payload = new Uint8Array(buffer, 120, len);
   return { type, payload, senderId, signature };
 }
+
+export type PublicKey = Uint8Array;

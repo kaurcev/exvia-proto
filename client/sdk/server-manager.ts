@@ -7,11 +7,11 @@ export interface ServerManagerEvents extends EventMap {
 }
 
 export interface IServerManager {
-  getServers(): string[];
-  addServer(address: string): void;
-  removeServer(address: string): void;
-  setSelectedServer(address: string | null): void;
-  getSelectedServer(): string | null;
+  getServers(): Promise<string[]>;
+  addServer(address: string): Promise<void>;
+  removeServer(address: string): Promise<void>;
+  setSelectedServer(address: string | null): Promise<void>;
+  getSelectedServer(): Promise<string | null>;
   on<K extends keyof ServerManagerEvents>(event: K, listener: (...args: ServerManagerEvents[K]) => void): void;
   off<K extends keyof ServerManagerEvents>(event: K, listener: (...args: ServerManagerEvents[K]) => void): void;
 }
@@ -20,60 +20,73 @@ export class LocalServerManager
   extends TypedEventEmitter<ServerManagerEvents>
   implements IServerManager
 {
-  private servers: string[];
+  private servers: string[] = [];
   private selected: string | null = null;
   private readonly storageKey = 'sdk:servers';
   private readonly selectedKey = 'sdk:selectedServer';
+  private loaded = false;
 
   constructor(private storage: IStorage) {
     super();
-    const saved = this.storage.getItem(this.storageKey);
-    this.servers = saved ? JSON.parse(saved) : [];
-    const savedSelected = this.storage.getItem(this.selectedKey);
-    this.selected = savedSelected || null;
   }
 
-  private saveServers(): void {
-    this.storage.setItem(this.storageKey, JSON.stringify(this.servers));
+  private async ensureLoaded(): Promise<void> {
+    if (this.loaded) return;
+    const [saved, savedSelected] = await Promise.all([
+      this.storage.getItem(this.storageKey),
+      this.storage.getItem(this.selectedKey)
+    ]);
+    this.servers = saved ? JSON.parse(saved) : [];
+    this.selected = savedSelected || null;
+    this.loaded = true;
+  }
+
+  private async saveServers(): Promise<void> {
+    await this.storage.setItem(this.storageKey, JSON.stringify(this.servers));
     this.emit('listChanged', this.servers.slice());
   }
 
-  getServers(): string[] {
+  async getServers(): Promise<string[]> {
+    await this.ensureLoaded();
     return this.servers.slice();
   }
 
-  addServer(address: string): void {
+  async addServer(address: string): Promise<void> {
+    await this.ensureLoaded();
     if (!this.servers.includes(address)) {
       this.servers.push(address);
-      this.saveServers();
+      await this.saveServers();
     }
   }
 
-  removeServer(address: string): void {
+  async removeServer(address: string): Promise<void> {
+    await this.ensureLoaded();
     const index = this.servers.indexOf(address);
     if (index !== -1) {
       this.servers.splice(index, 1);
       if (this.selected === address) {
-        this.setSelectedServer(this.servers[0] || null);
+        await this.setSelectedServer(this.servers[0] || null);
       }
-      this.saveServers();
+      await this.saveServers();
     }
   }
 
-  setSelectedServer(address: string | null): void {
+  async setSelectedServer(address: string | null): Promise<void> {
+    await this.ensureLoaded();
     if (address !== null && !this.servers.includes(address)) {
       throw new Error('Server not in list');
     }
     this.selected = address;
     if (address === null) {
-      this.storage.removeItem(this.selectedKey);
+      await this.storage.removeItem(this.selectedKey);
     } else {
-      this.storage.setItem(this.selectedKey, address);
+      await this.storage.setItem(this.selectedKey, address);
     }
     this.emit('selectedChanged', address);
   }
 
-  getSelectedServer(): string | null {
+  async getSelectedServer(): Promise<string | null> {
+    await this.ensureLoaded();
     return this.selected;
   }
 }

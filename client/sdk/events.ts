@@ -4,6 +4,7 @@ export type EventMap = Record<string, any[]>;
 export interface IEventEmitter<T extends EventMap> {
   on<K extends keyof T>(event: K, listener: (...args: T[K]) => void): void;
   off<K extends keyof T>(event: K, listener: (...args: T[K]) => void): void;
+  once<K extends keyof T>(event: K, listener: (...args: T[K]) => void): void;
   emit<K extends keyof T>(event: K, ...args: T[K]): void;
 }
 
@@ -22,6 +23,14 @@ export class TypedEventEmitter<T extends EventMap> implements IEventEmitter<T> {
     if (set) {
       set.delete(listener as (...args: unknown[]) => void);
     }
+  }
+
+  once<K extends keyof T>(event: K, listener: (...args: T[K]) => void): void {
+    const wrapper = (...args: T[K]) => {
+      this.off(event, wrapper);
+      listener(...args);
+    };
+    this.on(event, wrapper);
   }
 
   emit<K extends keyof T>(event: K, ...args: T[K]): void {

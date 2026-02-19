@@ -15,6 +15,7 @@ export interface IConnectionManager {
   isConnected(): boolean;
   on<K extends keyof ConnectionEvents>(event: K, listener: (...args: ConnectionEvents[K]) => void): void;
   off<K extends keyof ConnectionEvents>(event: K, listener: (...args: ConnectionEvents[K]) => void): void;
+  once<K extends keyof ConnectionEvents>(event: K, listener: (...args: ConnectionEvents[K]) => void): void;  // <-- добавлено
 }
 
 export class WebSocketConnectionManager
@@ -32,6 +33,7 @@ export class WebSocketConnectionManager
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
+        console.log('🔌 WebSocket opened');
         this.ws = ws;
         this.emit('open');
         resolve();
@@ -39,7 +41,9 @@ export class WebSocketConnectionManager
 
       ws.onmessage = (event) => {
         try {
+          console.log('📩 Raw message received, type:', typeof event.data, 'size:', event.data.byteLength);
           const frame = decodeFrame(event.data as ArrayBuffer);
+          console.log('📦 Frame decoded, type:', frame.type);
           this.emit('frame', frame);
         } catch (err) {
           console.error('Failed to decode frame', err);
@@ -48,11 +52,13 @@ export class WebSocketConnectionManager
 
       ws.onerror = () => {
         const error = new Error('WebSocket connection error');
+        console.error('❌ WebSocket error');
         this.emit('error', error);
         reject(error);
       };
 
       ws.onclose = (event) => {
+        console.log('🔌 WebSocket closed, code:', event.code, 'reason:', event.reason);
         this.ws = null;
         this.connectionPromise = null;
         this.emit('close', event.code, event.reason);
@@ -72,8 +78,10 @@ export class WebSocketConnectionManager
 
   send(frame: Frame): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('❌ WebSocket is not open, cannot send');
       throw new Error('WebSocket is not open');
     }
+    console.log('📤 Sending frame type:', frame.type);
     this.ws.send(encodeFrame(frame));
   }
 
